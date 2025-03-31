@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "7021:80"
+      - "7031:80"
     environment:
       - NODE_ENV=development
       - HOST=0.0.0.0

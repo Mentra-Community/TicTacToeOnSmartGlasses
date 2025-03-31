@@ -1,11 +1,11 @@
 {
     "name": "Tic-Tac-Toe",
-    "description": "Tic-Tac-Toe game for smart glasses.",
+    "description": "Play Tic-Tac-Toe on your smart glasses! Say a number (1-9) to place your mark on the grid. You'll be randomly assigned to play as either X or O, and face off against an AI opponent with adjustable difficulty.",
     "version": "1.0.0",
     "settings": [
         {
             "type": "group",
-            "title": "General settings"
+            "title": "Game settings"
         },
         {
             "key": "difficulty",

@@ -1,0 +1,15 @@
+# Environment variables
+.env
+
+# Logs
+logs
+*.log
+*.log.*
+
+# Dependency directories
+node_modules/
+dist/
+
+# Runtime data
+pids
+*.pid

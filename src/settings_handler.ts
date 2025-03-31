@@ -5,35 +5,16 @@ const CLOUD_URL = 'cloud';
 
 // Define the settings interface
 interface UserSettings {
-  lineWidth: number;
-  numberOfLines: number;
-  scrollSpeed: number;
-  customText: string;
+  difficulty: string;
 }
 
 // Default settings
 const DEFAULT_SETTINGS: UserSettings = {
-  lineWidth: 38,
-  numberOfLines: 4,
-  scrollSpeed: 120,
-  customText: ''
+  difficulty: 'Easy'
 };
 
 // Store user settings in memory
 const userSettingsMap = new Map<string, UserSettings>();
-
-function convertLineWidth(width: string | number): number {
-  if (typeof width === 'number') return width;
-
-  switch (width.toLowerCase()) {
-    case 'very narrow': return 21;
-    case 'narrow': return 30;
-    case 'medium': return 38;
-    case 'wide': return 42;
-    case 'very wide': return 52;
-    default: return 38;
-  }
-}
 
 /**
  * Fetches and applies settings for a user
@@ -51,19 +32,11 @@ async function fetchSettings(userId: string): Promise<UserSettings> {
     console.log(`Fetched settings for userId ${userId}:`, settings);
 
     // Find the relevant settings
-    const lineWidthSetting = settings.find((s: any) => s.key === 'line_width');
-    const numberOfLinesSetting = settings.find((s: any) => s.key === 'number_of_lines');
-    const scrollSpeedSetting = settings.find((s: any) => s.key === 'scroll_speed');
-    const customTextSetting = settings.find((s: any) => s.key === 'input_text');
-
-    console.log(`Custom text setting for userId ${userId}:`, customTextSetting);
+    const difficultySetting = settings.find((s: any) => s.key === 'difficulty');
 
     // Create settings object with defaults if not found
     const userSettings: UserSettings = {
-      lineWidth: lineWidthSetting ? convertLineWidth(lineWidthSetting.value) : DEFAULT_SETTINGS.lineWidth,
-      numberOfLines: numberOfLinesSetting ? Number(numberOfLinesSetting.value) : DEFAULT_SETTINGS.numberOfLines,
-      scrollSpeed: scrollSpeedSetting ? Number(scrollSpeedSetting.value) : DEFAULT_SETTINGS.scrollSpeed,
-      customText: customTextSetting?.value || DEFAULT_SETTINGS.customText
+      difficulty: difficultySetting?.value || DEFAULT_SETTINGS.difficulty
     };
 
     // Store the settings for this user
@@ -90,47 +63,17 @@ function getUserSettings(userId: string): UserSettings {
 }
 
 /**
- * Gets the line width for a user
+ * Gets the difficulty level for a user
  * @param userId The user ID
- * @returns The line width
+ * @returns The difficulty level (Easy, Medium, or Impossible)
  */
-function getUserLineWidth(userId: string): number {
-  return getUserSettings(userId).lineWidth;
-}
-
-/**
- * Gets the number of lines for a user
- * @param userId The user ID
- * @returns The number of lines
- */
-function getUserNumberOfLines(userId: string): number {
-  return getUserSettings(userId).numberOfLines;
-}
-
-/**
- * Gets the scroll speed for a user
- * @param userId The user ID
- * @returns The scroll speed in words per minute
- */
-function getUserScrollSpeed(userId: string): number {
-  return getUserSettings(userId).scrollSpeed;
-}
-
-/**
- * Gets the custom text for a user
- * @param userId The user ID
- * @returns The custom text
- */
-function getUserCustomText(userId: string): string {
-  return getUserSettings(userId).customText;
+function getUserDifficulty(userId: string): string {
+  return getUserSettings(userId).difficulty;
 }
 
 export {
   fetchSettings,
   getUserSettings,
-  getUserLineWidth,
-  getUserNumberOfLines,
-  getUserScrollSpeed,
-  getUserCustomText,
+  getUserDifficulty,
   UserSettings
 };
