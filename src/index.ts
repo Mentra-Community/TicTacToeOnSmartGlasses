@@ -64,31 +64,40 @@ class TicTacToeManager {
     
     // Show turn message only for first move
     if (this.isFirstMove) {
-      message = this.currentPlayer === this.userSymbol ? 
+      message = this.userSymbol === 'X' ? 
         "You start first!" : 
         "AI starts first!";
       this.isFirstMove = false;
+      
+      if (message) {
+        showGameToUser(sessionId, ws, message);
+        // After 1.5 seconds, show the grid
+        setTimeout(() => {
+          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+        }, 1500);
+      }
     }
-    // Show game over messages
+    // Show game over messages (without showing grid after)
     else if (this.gameOver) {
       if (this.winner) {
         message = `${this.winner === this.userSymbol ? 'YOU WIN!' : 'AI WINS!'} Say 'new game'`;
       } else {
         message = "It's a DRAW! Say 'new game'";
       }
+      showGameToUser(sessionId, ws, message);
     }
     // Show error messages for invalid moves
     else if (this.lastError) {
       message = this.lastError;
       this.lastError = null;
-    }
-
-    if (message) {
-      showGameToUser(sessionId, ws, message);
-      // After 1.5 seconds, show the grid
-      setTimeout(() => {
-        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
-      }, 1500);
+      
+      if (message) {
+        showGameToUser(sessionId, ws, message);
+        // After 1.5 seconds, show the grid
+        setTimeout(() => {
+          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+        }, 1500);
+      }
     }
   }
   
@@ -96,9 +105,11 @@ class TicTacToeManager {
     // Check if it's the user's turn
     if (this.currentPlayer !== this.userSymbol || this.gameOver) {
       showGameToUser(sessionId, ws, "Not your turn!");
-      setTimeout(() => {
-        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
-      }, 1500);
+      if (!this.gameOver) {
+        setTimeout(() => {
+          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+        }, 1500);
+      }
       return false;
     }
     
@@ -308,6 +319,14 @@ class TicTacToeManager {
   getCurrentPlayer(): 'X' | 'O' {
     return this.currentPlayer;
   }
+
+  getBoard(): string[] {
+    return this.board;
+  }
+
+  getAISymbol(): 'X' | 'O' {
+    return this.aiSymbol;
+  }
 }
 
 const app = express();
@@ -506,38 +525,52 @@ function handleTranscription(sessionId: string, userId: string, ws: WebSocket, t
     return;
   }
   
-  // Check for move commands (numbers 1-9)
-  const move = parseInt(text);
-  if (!isNaN(move) && move >= 1 && move <= 9) {
-    // Make the player's move
-    const moveSuccess = gameManager.makeMove(move, ws, sessionId);
-    
-    if (moveSuccess) {
-      // Show the updated board
-      showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-      
-      // If game is over after player's move, show the message
-      if (gameManager.isGameOver()) {
+  // Extract the first number from the transcript
+  const match = text.match(/\d/);
+  if (match) {
+    const move = parseInt(match[0]);
+    if (move >= 1 && move <= 9) {
+      // Check if the position is already taken by the AI
+      const index = move - 1;
+      const board = gameManager.getBoard();
+      if (board[index] === gameManager.getAISymbol()) {
+        showGameToUser(sessionId, ws, "Position already taken!");
         setTimeout(() => {
-          gameManager.showMessage(ws, sessionId);
-        }, 1000);
+          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+        }, 1500);
         return;
       }
       
-      // If the game is not over, let the AI make a move
-      setTimeout(() => {
-        if (!gameManager.isGameOver()) {
-          gameManager.makeAIMove();
-          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-          
-          // If game is over after AI's move, show the message
-          if (gameManager.isGameOver()) {
-            setTimeout(() => {
-              gameManager.showMessage(ws, sessionId);
-            }, 1000);
-          }
+      // Make the player's move
+      const moveSuccess = gameManager.makeMove(move, ws, sessionId);
+      
+      if (moveSuccess) {
+        // Show the updated board
+        showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+        
+        // If game is over after player's move, show the message
+        if (gameManager.isGameOver()) {
+          setTimeout(() => {
+            gameManager.showMessage(ws, sessionId);
+          }, 1000);
+          return;
         }
-      }, 1000);
+        
+        // If the game is not over, let the AI make a move
+        setTimeout(() => {
+          if (!gameManager.isGameOver()) {
+            gameManager.makeAIMove();
+            showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+            
+            // If game is over after AI's move, show the message
+            if (gameManager.isGameOver()) {
+              setTimeout(() => {
+                gameManager.showMessage(ws, sessionId);
+              }, 1000);
+            }
+          }
+        }, 1000);
+      }
     }
   }
 }
