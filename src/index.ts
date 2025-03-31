@@ -2,7 +2,6 @@
 import express from 'express';
 import WebSocket from 'ws';
 import path from 'path';
-import { TicTacToe } from 'tictactoe-ai';
 
 import {
   TpaConnectionInit,
@@ -28,7 +27,8 @@ class TicTacToeManager {
   private difficulty: string;
   private userSymbol: 'X' | 'O'; // Track which symbol the user is playing
   private aiSymbol: 'X' | 'O';   // Track which symbol the AI is playing
-  private ai: TicTacToe;
+  private isFirstMove: boolean = true;  // Add this to track first move
+  private lastError: string | null = null;  // Add this field
   
   constructor(difficulty: string = 'Easy') {
     this.board = Array(9).fill('');
@@ -38,64 +38,67 @@ class TicTacToeManager {
     this.gameOver = false;
     this.winner = null;
     this.difficulty = difficulty;
-    this.ai = new TicTacToe();
   }
   
   getCurrentBoardDisplay(): string {
-    // Create a visual representation of the board with numbers for empty spaces
-    let display = "TIC TAC TOE\n";
+    let display = '';
     
-    // First line: Show player symbol and current turn
-    if (this.gameOver) {
-      if (this.winner) {
-        if (this.winner === this.userSymbol) {
-          display += "YOU WIN! Say 'new game'\n";
-        } else {
-          display += "AI WINS! Say 'new game'\n";
-        }
-      } else {
-        display += "DRAW! Say 'new game'\n";
+    // Just show the grid
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        const index = i * 3 + j;
+        const cell = this.board[index] || (index + 1).toString();
+        display += ` ${cell} `;
+        if (j < 2) display += '│';
       }
-    } else {
-      display += `You: ${this.userSymbol} | ${this.currentPlayer === this.userSymbol ? "YOUR TURN" : "AI'S TURN"}\n`;
+      // Add horizontal line after first and second rows
+      if (i < 2) display += '\n───────';
+      display += '\n';
     }
     
-    // Second line: Game board row 1
-    let row1 = '';
-    for (let j = 0; j < 3; j++) {
-      const cell = this.board[j] || (j + 1).toString();
-      row1 += ` ${cell} `;
-      if (j < 2) row1 += '|';
-    }
-    display += row1 + '\n';
-    
-    // Third line: Game board row 2
-    let row2 = '';
-    for (let j = 3; j < 6; j++) {
-      const cell = this.board[j] || (j + 1).toString();
-      row2 += ` ${cell} `;
-      if (j < 5) row2 += '|';
-    }
-    display += row2 + '\n';
-    
-    // Fourth line: Game board row 3
-    let row3 = '';
-    for (let j = 6; j < 9; j++) {
-      const cell = this.board[j] || (j + 1).toString();
-      row3 += ` ${cell} `;
-      if (j < 8) row3 += '|';
-    }
-    display += row3 + '\n';
-    
-    // Fifth line: Instructions
-    display += "Say 1-9 to place mark";
-    
-    return display;
+    return display.trimEnd();
   }
   
-  makeMove(position: number): boolean {
+  showMessage(ws: WebSocket, sessionId: string): void {
+    let message = '';
+    
+    // Show turn message only for first move
+    if (this.isFirstMove) {
+      message = this.currentPlayer === this.userSymbol ? 
+        "You start first!" : 
+        "AI starts first!";
+      this.isFirstMove = false;
+    }
+    // Show game over messages
+    else if (this.gameOver) {
+      if (this.winner) {
+        message = `${this.winner === this.userSymbol ? 'YOU WIN!' : 'AI WINS!'} Say 'new game'`;
+      } else {
+        message = "It's a DRAW! Say 'new game'";
+      }
+    }
+    // Show error messages for invalid moves
+    else if (this.lastError) {
+      message = this.lastError;
+      this.lastError = null;
+    }
+
+    if (message) {
+      showGameToUser(sessionId, ws, message);
+      // After 1.5 seconds, show the grid
+      setTimeout(() => {
+        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+      }, 1500);
+    }
+  }
+  
+  makeMove(position: number, ws: WebSocket, sessionId: string): boolean {
     // Check if it's the user's turn
     if (this.currentPlayer !== this.userSymbol || this.gameOver) {
+      showGameToUser(sessionId, ws, "Not your turn!");
+      setTimeout(() => {
+        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+      }, 1500);
       return false;
     }
     
@@ -104,16 +107,17 @@ class TicTacToeManager {
     
     // Check if the move is valid
     if (index < 0 || index > 8 || this.board[index] !== '') {
+      showGameToUser(sessionId, ws, "Invalid move!");
+      setTimeout(() => {
+        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+      }, 1500);
       return false;
     }
     
     // Make the move
     this.board[index] = this.currentPlayer;
-    
-    // Check for a win or draw
     this.checkGameState();
     
-    // Switch player if game is not over
     if (!this.gameOver) {
       this.currentPlayer = this.currentPlayer === 'X' ? 'O' : 'X';
     }
@@ -130,28 +134,24 @@ class TicTacToeManager {
     
     switch (this.difficulty) {
       case 'Impossible':
-        // Use the AI's best move
-        moveIndex = this.ai.getBestMove(this.board, this.aiSymbol);
+        moveIndex = this.getBestMove();
         break;
       case 'Medium':
         // 70% chance of best move, 30% chance of random move
         moveIndex = Math.random() < 0.7 
-          ? this.ai.getBestMove(this.board, this.aiSymbol)
+          ? this.getBestMove()
           : this.findRandomMove();
         break;
       case 'Easy':
       default:
-        // Just make a random valid move
         moveIndex = this.findRandomMove();
         break;
     }
     
-    // Make the move
     if (moveIndex >= 0) {
       this.board[moveIndex] = this.aiSymbol;
       this.checkGameState();
       
-      // Switch player if game is not over
       if (!this.gameOver) {
         this.currentPlayer = this.currentPlayer === 'X' ? 'O' : 'X';
       }
@@ -177,12 +177,88 @@ class TicTacToeManager {
     return emptyCells[randomIndex];
   }
   
+  private getBestMove(): number {
+    let bestScore = -Infinity;
+    let bestMove = -1;
+
+    for (let i = 0; i < 9; i++) {
+      if (this.board[i] === '') {
+        this.board[i] = this.aiSymbol;
+        let score = this.minimax(this.board, 0, false);
+        this.board[i] = '';
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestMove = i;
+        }
+      }
+    }
+    
+    return bestMove;
+  }
+
+  private minimax(board: string[], depth: number, isMaximizing: boolean): number {
+    const result = this.checkWinner();
+    
+    if (result !== null) {
+      if (result === this.aiSymbol) return 10 - depth;
+      if (result === this.userSymbol) return depth - 10;
+      if (result === 'draw') return 0;
+    }
+
+    if (isMaximizing) {
+      let bestScore = -Infinity;
+      for (let i = 0; i < 9; i++) {
+        if (board[i] === '') {
+          board[i] = this.aiSymbol;
+          let score = this.minimax(board, depth + 1, false);
+          board[i] = '';
+          bestScore = Math.max(score, bestScore);
+        }
+      }
+      return bestScore;
+    } else {
+      let bestScore = Infinity;
+      for (let i = 0; i < 9; i++) {
+        if (board[i] === '') {
+          board[i] = this.userSymbol;
+          let score = this.minimax(board, depth + 1, true);
+          board[i] = '';
+          bestScore = Math.min(score, bestScore);
+        }
+      }
+      return bestScore;
+    }
+  }
+
   private checkWinner(): string | null {
-    // Use the AI library's check for winner
-    const result = this.ai.getWinner(this.board);
-    if (result === 'draw') return 'draw';
-    if (result === this.userSymbol) return this.userSymbol;
-    if (result === this.aiSymbol) return this.aiSymbol;
+    // Check rows
+    for (let i = 0; i < 9; i += 3) {
+      if (this.board[i] && this.board[i] === this.board[i + 1] && this.board[i] === this.board[i + 2]) {
+        return this.board[i];
+      }
+    }
+    
+    // Check columns
+    for (let i = 0; i < 3; i++) {
+      if (this.board[i] && this.board[i] === this.board[i + 3] && this.board[i] === this.board[i + 6]) {
+        return this.board[i];
+      }
+    }
+    
+    // Check diagonals
+    if (this.board[0] && this.board[0] === this.board[4] && this.board[0] === this.board[8]) {
+      return this.board[0];
+    }
+    if (this.board[2] && this.board[2] === this.board[4] && this.board[2] === this.board[6]) {
+      return this.board[2];
+    }
+    
+    // Check for draw
+    if (this.board.every(cell => cell !== '')) {
+      return 'draw';
+    }
+    
     return null;
   }
   
@@ -201,6 +277,7 @@ class TicTacToeManager {
     this.currentPlayer = 'X'; // X always goes first
     this.gameOver = false;
     this.winner = null;
+    this.isFirstMove = true;  // Reset first move flag
     
     // If AI starts (user is O), make AI's first move
     if (this.userSymbol === 'O') {
@@ -226,6 +303,10 @@ class TicTacToeManager {
   
   getUserSymbol(): 'X' | 'O' {
     return this.userSymbol;
+  }
+
+  getCurrentPlayer(): 'X' | 'O' {
+    return this.currentPlayer;
   }
 }
 
@@ -282,6 +363,17 @@ app.post('/webhook', async (req, res) => {
         userGameManagers.set(userId, gameManager);
       } else {
         gameManager.setDifficulty(difficulty);
+      }
+
+      // Show initial message and grid
+      gameManager.showMessage(ws, sessionId);
+      
+      // If AI starts, make its move after the message
+      if (gameManager.getCurrentPlayer() !== gameManager.getUserSymbol()) {
+        setTimeout(() => {
+          gameManager.makeAIMove();
+          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+        }, 2000);
       }
     });
 
@@ -347,13 +439,21 @@ function handleMessage(sessionId: string, userId: string, ws: WebSocket, message
       };
       ws.send(JSON.stringify(subMessage));
       
-      // Display the initial game board
-      setTimeout(() => {
-        const gameManager = userGameManagers.get(userId);
-        if (gameManager) {
+      // Create new game manager for this user
+      const difficulty = getUserDifficulty(userId);
+      const gameManager = new TicTacToeManager(difficulty);
+      userGameManagers.set(userId, gameManager);
+      
+      // Show initial message and grid
+      gameManager.showMessage(ws, sessionId);
+      
+      // If AI starts, make its move after the message
+      if (gameManager.getCurrentPlayer() !== gameManager.getUserSymbol()) {
+        setTimeout(() => {
+          gameManager.makeAIMove();
           showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-        }
-      }, 1000);
+        }, 2000);
+      }
       
       break;
     }
@@ -385,21 +485,24 @@ function handleTranscription(sessionId: string, userId: string, ws: WebSocket, t
   if (!gameManager) return;
   
   // Check for game commands
-  if (text === 'new game' || text === 'restart') {
+  if (text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('newgame') || text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('restart')) {
     gameManager.resetGame();
-    showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+    gameManager.showMessage(ws, sessionId);
     return;
   }
   
   // Check if the game is over
   if (gameManager.isGameOver()) {
-    showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+    gameManager.showMessage(ws, sessionId);
     return;
   }
   
   // Check if it's the user's turn
   if (!gameManager.isUserTurn()) {
-    showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay() + "\n\nPlease wait for AI's move.");
+    showGameToUser(sessionId, ws, "Not your turn!");
+    setTimeout(() => {
+      showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+    }, 1500);
     return;
   }
   
@@ -407,22 +510,34 @@ function handleTranscription(sessionId: string, userId: string, ws: WebSocket, t
   const move = parseInt(text);
   if (!isNaN(move) && move >= 1 && move <= 9) {
     // Make the player's move
-    const moveSuccess = gameManager.makeMove(move);
+    const moveSuccess = gameManager.makeMove(move, ws, sessionId);
     
     if (moveSuccess) {
       // Show the updated board
       showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+      
+      // If game is over after player's move, show the message
+      if (gameManager.isGameOver()) {
+        setTimeout(() => {
+          gameManager.showMessage(ws, sessionId);
+        }, 1000);
+        return;
+      }
       
       // If the game is not over, let the AI make a move
       setTimeout(() => {
         if (!gameManager.isGameOver()) {
           gameManager.makeAIMove();
           showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+          
+          // If game is over after AI's move, show the message
+          if (gameManager.isGameOver()) {
+            setTimeout(() => {
+              gameManager.showMessage(ws, sessionId);
+            }, 1000);
+          }
         }
-      }, 1000); // Small delay for better UX
-    } else {
-      // Invalid move, show the current board again
-      showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay() + "\n\nInvalid move. Try again.");
+      }, 1000);
     }
   }
 }
@@ -522,3 +637,4 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`${PACKAGE_NAME} server running on port ${PORT}`);
 });
+
