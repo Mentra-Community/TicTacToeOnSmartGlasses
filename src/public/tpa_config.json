@@ -1,0 +1,31 @@
+{
+    "name": "Tic-Tac-Toe",
+    "description": "Tic-Tac-Toe game for smart glasses.",
+    "version": "1.0.0",
+    "settings": [
+        {
+            "type": "group",
+            "title": "General settings"
+        },
+        {
+            "key": "difficulty",
+            "type": "select",
+            "label": "Difficulty",
+            "defaultValue": "Easy",
+            "options": [
+                {
+                    "label": "Easy",
+                    "value": "Easy"
+                },
+                {
+                    "label": "Medium",
+                    "value": "Medium"
+                },
+                {
+                    "label": "Impossible",
+                    "value": "Impossible"
+                }
+            ]
+        }
+    ]
+}
