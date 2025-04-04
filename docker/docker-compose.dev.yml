@@ -1,0 +1,33 @@
+services:
+  tictactoe:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: tictactoe-dev
+    ports:
+      - "8031:80"
+    volumes:
+      - ..:/app
+      - /app/node_modules 
+    env_file:
+      - ../.env
+    environment:
+      - PORT=80
+      - NODE_ENV=development
+      - CLOUD_HOST_NAME=cloud
+    command: ["./scripts/docker-startup.sh", "bun", "--hot", "src/index.ts"]
+    restart: "no"
+    stdin_open: true
+    tty: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - augmentos-network-dev
+
+networks:
+  augmentos-network-dev:
+    external: true
+    name: augmentos-network-dev

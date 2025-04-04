@@ -1,22 +1,18 @@
 // augmentos_cloud/packages/apps/tictactoe/src/index.ts
-import express from 'express';
-import WebSocket from 'ws';
 import path from 'path';
-
 import {
-  TpaConnectionInit,
-  DisplayRequest,
-  TpaToCloudMessageType,
-  CloudToTpaMessageType,
-  ViewType,
-  LayoutType,
-  TpaSubscriptionUpdate,
-  createTranscriptionStream,
-  ExtendedStreamType,
+  TpaServer,
+  TpaSession,
   StreamType,
-  DataStream,
-} from './sdk';
-import { fetchSettings, getUserDifficulty } from './settings_handler';
+  ViewType,
+  createTranscriptionStream,
+} from '@augmentos/sdk';
+import { fetchSettings, getUserDifficulty, UserSettings } from './settings_handler';
+
+// Configuration constants
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
+const PACKAGE_NAME = 'com.augmentos.tictactoe';
+const API_KEY = 'test_key'; // In production, this would be securely stored
 
 // TicTacToeManager class to handle the game logic
 class TicTacToeManager {
@@ -59,7 +55,7 @@ class TicTacToeManager {
     return display.trimEnd();
   }
   
-  showMessage(ws: WebSocket, sessionId: string): void {
+  showMessage(session: TpaSession): void {
     let message = '';
     
     // Show turn message only for first move
@@ -70,10 +66,10 @@ class TicTacToeManager {
       this.isFirstMove = false;
       
       if (message) {
-        showGameToUser(sessionId, ws, message);
+        this.showGameToUser(session, message);
         // After 1.5 seconds, show the grid
         setTimeout(() => {
-          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+          this.showGameToUser(session, this.getCurrentBoardDisplay());
         }, 1500);
       }
     }
@@ -84,7 +80,7 @@ class TicTacToeManager {
       } else {
         message = "It's a DRAW! Say 'new game'";
       }
-      showGameToUser(sessionId, ws, message);
+      this.showGameToUser(session, message);
     }
     // Show error messages for invalid moves
     else if (this.lastError) {
@@ -92,22 +88,31 @@ class TicTacToeManager {
       this.lastError = null;
       
       if (message) {
-        showGameToUser(sessionId, ws, message);
+        this.showGameToUser(session, message);
         // After 1.5 seconds, show the grid
         setTimeout(() => {
-          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+          this.showGameToUser(session, this.getCurrentBoardDisplay());
         }, 1500);
       }
     }
   }
+
+  // Show game board or messages
+  showGameToUser(session: TpaSession, text: string): void {
+    console.log(`Game board to show: \n${text}`);
+    session.layouts.showTextWall(text, {
+      view: ViewType.MAIN,
+      durationMs: 60 * 1000, // 60 seconds timeout
+    });
+  }
   
-  makeMove(position: number, ws: WebSocket, sessionId: string): boolean {
+  makeMove(position: number, session: TpaSession): boolean {
     // Check if it's the user's turn
     if (this.currentPlayer !== this.userSymbol || this.gameOver) {
-      showGameToUser(sessionId, ws, "Not your turn!");
+      this.showGameToUser(session, "Not your turn!");
       if (!this.gameOver) {
         setTimeout(() => {
-          showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+          this.showGameToUser(session, this.getCurrentBoardDisplay());
         }, 1500);
       }
       return false;
@@ -118,9 +123,9 @@ class TicTacToeManager {
     
     // Check if the move is valid
     if (index < 0 || index > 8 || this.board[index] !== '') {
-      showGameToUser(sessionId, ws, "Invalid move!");
+      this.showGameToUser(session, "Invalid move!");
       setTimeout(() => {
-        showGameToUser(sessionId, ws, this.getCurrentBoardDisplay());
+        this.showGameToUser(session, this.getCurrentBoardDisplay());
       }, 1500);
       return false;
     }
@@ -329,47 +334,29 @@ class TicTacToeManager {
   }
 }
 
-const app = express();
-const PORT = 80; // Default http port.
-const PACKAGE_NAME = 'com.augmentos.tictactoe';
-const API_KEY = 'test_key'; // In production, this would be securely stored
-
 // Track user game managers
 const userGameManagers: Map<string, TicTacToeManager> = new Map();
-const userSessions = new Map<string, Set<string>>(); // userId -> Set<sessionId>
 
-// Parse JSON bodies
-app.use(express.json());
+/**
+ * TicTacToeApp - Main application class that extends TpaServer
+ */
+class TicTacToeApp extends TpaServer {
+  constructor() {
+    super({
+      packageName: PACKAGE_NAME,
+      apiKey: API_KEY,
+      port: PORT,
+      publicDir: path.resolve(__dirname, './public'),
+    });
+  }
 
-// Serve static files from the public directory
-app.use(express.static(path.join(__dirname, './public')));
-
-// Track active sessions
-const activeSessions = new Map<string, WebSocket>();
-
-// Handle webhook call from AugmentOS Cloud
-app.post('/webhook', async (req, res) => {
-  try {
-    const { sessionId, userId } = req.body;
+  /**
+   * Called by TpaServer when a new session is created
+   */
+  protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
     console.log(`\n\n🎮🎮🎮 Received Tic Tac Toe session request for user ${userId}, session ${sessionId}\n\n`);
 
-    // Start WebSocket connection to cloud
-    const ws = new WebSocket(`ws://cloud/tpa-ws`);
-
-    ws.on('open', async () => {
-      console.log(`\n[Session ${sessionId}]\n connected to augmentos-cloud\n`);
-      // Send connection init with session ID
-      const initMessage: TpaConnectionInit = {
-        type: TpaToCloudMessageType.CONNECTION_INIT,
-        sessionId,
-        packageName: PACKAGE_NAME,
-        apiKey: API_KEY
-      };
-
-      console.log(`Sending connection init message to augmentos-cloud for session ${sessionId}`);
-      console.log(JSON.stringify(initMessage));
-      ws.send(JSON.stringify(initMessage));
-
+    try {
       // Fetch and apply settings for the session
       await fetchSettings(userId);
       
@@ -384,290 +371,195 @@ app.post('/webhook', async (req, res) => {
         gameManager.setDifficulty(difficulty);
       }
 
+      // Subscribe to transcription events
+      const transcriptionStream = createTranscriptionStream("en-US") as unknown as StreamType;
+      session.subscribe(transcriptionStream);
+
+      // Register transcription handler
+      const cleanup = session.events.onTranscription((data: any) => {
+        this.handleTranscription(session, sessionId, userId, data);
+      });
+
+      // Add cleanup handler
+      this.addCleanupHandler(cleanup);
+
       // Show initial message and grid
-      gameManager.showMessage(ws, sessionId);
+      gameManager.showMessage(session);
       
       // If AI starts, make its move after the message
       if (gameManager.getCurrentPlayer() !== gameManager.getUserSymbol()) {
         setTimeout(() => {
-          gameManager.makeAIMove();
-          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
+          if (gameManager) {
+            gameManager.makeAIMove();
+            gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+          }
         }, 2000);
       }
-    });
-
-    ws.on('message', (data: Buffer) => {
-      try {
-        const message = JSON.parse(data.toString());
-        handleMessage(sessionId, userId, ws, message);
-      } catch (error) {
-        console.error('Error parsing message:', error);
-      }
-    });
-
-    ws.on('close', () => {
-      console.log(`Session ${sessionId} disconnected`);
-      
-      // Clean up WebSocket connection
-      activeSessions.delete(sessionId);
-      
-      // Remove session from user's sessions map
-      if (userSessions.has(userId)) {
-        const sessions = userSessions.get(userId)!;
-        sessions.delete(sessionId);
-        if (sessions.size === 0) {
-          userSessions.delete(userId);
-          // If no more sessions for this user, clean up the game manager
-          userGameManagers.delete(userId);
-        }
-      } else {
-        console.log(`Session ${sessionId} not found in userSessions map for user ${userId}`);
-      }
-      
-      // Force garbage collection for any remaining references
-      ws.removeAllListeners();
-      
-      console.log(`Cleanup completed for session ${sessionId}, user ${userId}`);
-    });
-
-    // Track this session for the user
-    if (!userSessions.has(userId)) {
-      userSessions.set(userId, new Set());
+    } catch (error) {
+      console.error('Error initializing session:', error);
     }
-    userSessions.get(userId)!.add(sessionId);
+  }
 
-    activeSessions.set(sessionId, ws);
+  /**
+   * Called by TpaServer when a session is stopped
+   */
+  protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
+    console.log(`Session ${sessionId} stopped: ${reason}`);
+  }
+
+  /**
+   * Handles transcription data from the AugmentOS cloud
+   */
+  private handleTranscription(
+    session: TpaSession, 
+    sessionId: string, 
+    userId: string, 
+    transcriptionData: any
+  ): void {
+    const isFinal = transcriptionData.isFinal;
+    const text = transcriptionData.text.toLowerCase().trim();
+    const language = transcriptionData.transcribeLanguage || 'en-US';
+
+    console.log(`[Session ${sessionId}]: Received transcription in language: ${language} - ${text} (isFinal: ${isFinal})`);
     
-    res.status(200).json({ status: 'connecting' });
-  } catch (error) {
-    console.error('Error handling webhook:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-function handleMessage(sessionId: string, userId: string, ws: WebSocket, message: any) {
-  switch (message.type) {
-    case CloudToTpaMessageType.CONNECTION_ACK: {
-      const transcriptionStream = createTranscriptionStream("en-US");
-
-      const subMessage: TpaSubscriptionUpdate = {
-        type: TpaToCloudMessageType.SUBSCRIPTION_UPDATE,
-        packageName: PACKAGE_NAME,
-        sessionId,
-        subscriptions: [transcriptionStream as ExtendedStreamType]
-      };
-      ws.send(JSON.stringify(subMessage));
-      
-      // Create new game manager for this user
-      const difficulty = getUserDifficulty(userId);
-      const gameManager = new TicTacToeManager(difficulty);
-      userGameManagers.set(userId, gameManager);
-      
-      // Show initial message and grid
-      gameManager.showMessage(ws, sessionId);
-      
-      // If AI starts, make its move after the message
-      if (gameManager.getCurrentPlayer() !== gameManager.getUserSymbol()) {
-        setTimeout(() => {
-          gameManager.makeAIMove();
-          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-        }, 2000);
-      }
-      
-      break;
+    // Only process final transcriptions
+    if (!isFinal) return;
+    
+    const gameManager = userGameManagers.get(userId);
+    if (!gameManager) return;
+    
+    // Check for game commands
+    if (text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('newgame') || 
+        text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('restart')) {
+      gameManager.resetGame();
+      gameManager.showMessage(session);
+      return;
     }
-
-    case CloudToTpaMessageType.DATA_STREAM: {
-      const streamMessage = message as DataStream;
-      if (streamMessage.streamType === StreamType.TRANSCRIPTION) {
-        handleTranscription(sessionId, userId, ws, streamMessage.data);
-      }
-      break;
+    
+    // Check if the game is over
+    if (gameManager.isGameOver()) {
+      gameManager.showMessage(session);
+      return;
     }
-
-    default:
-      console.log('Unknown message type:', message.type);
-  }
-}
-
-function handleTranscription(sessionId: string, userId: string, ws: WebSocket, transcriptionData: any) {
-  const isFinal = transcriptionData.isFinal;
-  const text = transcriptionData.text.toLowerCase().trim();
-  const language = transcriptionData.transcribeLanguage || 'en-US';
-
-  console.log(`[Session ${sessionId}]: Received transcription in language: ${language} - ${text} (isFinal: ${isFinal})`);
-  
-  // Only process final transcriptions
-  if (!isFinal) return;
-  
-  const gameManager = userGameManagers.get(userId);
-  if (!gameManager) return;
-  
-  // Check for game commands
-  if (text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('newgame') || text.toLowerCase().replace(/[^a-z0-9]/g, '').includes('restart')) {
-    gameManager.resetGame();
-    gameManager.showMessage(ws, sessionId);
-    return;
-  }
-  
-  // Check if the game is over
-  if (gameManager.isGameOver()) {
-    gameManager.showMessage(ws, sessionId);
-    return;
-  }
-  
-  // Check if it's the user's turn
-  if (!gameManager.isUserTurn()) {
-    showGameToUser(sessionId, ws, "Not your turn!");
-    setTimeout(() => {
-      showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-    }, 1500);
-    return;
-  }
-  
-  // Extract the first number from the transcript
-  const match = text.match(/\d/);
-  if (match) {
-    const move = parseInt(match[0]);
-    if (move >= 1 && move <= 9) {
-      // Check if the position is already taken by the AI
-      const index = move - 1;
-      const board = gameManager.getBoard();
-      if (board[index] === gameManager.getAISymbol()) {
-        showGameToUser(sessionId, ws, "Position already taken!");
-        setTimeout(() => {
-          showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-        }, 1500);
-        return;
-      }
-      
-      // Make the player's move
-      const moveSuccess = gameManager.makeMove(move, ws, sessionId);
-      
-      if (moveSuccess) {
-        // Show the updated board
-        showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-        
-        // If game is over after player's move, show the message
-        if (gameManager.isGameOver()) {
+    
+    // Check if it's the user's turn
+    if (!gameManager.isUserTurn()) {
+      gameManager.showGameToUser(session, "Not your turn!");
+      setTimeout(() => {
+        gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+      }, 1500);
+      return;
+    }
+    
+    // Extract the first number from the transcript
+    const match = text.match(/\d/);
+    if (match) {
+      const move = parseInt(match[0]);
+      if (move >= 1 && move <= 9) {
+        // Check if the position is already taken by the AI
+        const index = move - 1;
+        const board = gameManager.getBoard();
+        if (board[index] === gameManager.getAISymbol()) {
+          gameManager.showGameToUser(session, "Position already taken!");
           setTimeout(() => {
-            gameManager.showMessage(ws, sessionId);
-          }, 1000);
+            gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+          }, 1500);
           return;
         }
         
-        // If the game is not over, let the AI make a move
-        setTimeout(() => {
-          if (!gameManager.isGameOver()) {
-            gameManager.makeAIMove();
-            showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-            
-            // If game is over after AI's move, show the message
-            if (gameManager.isGameOver()) {
-              setTimeout(() => {
-                gameManager.showMessage(ws, sessionId);
-              }, 1000);
-            }
+        // Make the player's move
+        const moveSuccess = gameManager.makeMove(move, session);
+        
+        if (moveSuccess) {
+          // Show the updated board
+          gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+          
+          // If game is over after player's move, show the message
+          if (gameManager.isGameOver()) {
+            setTimeout(() => {
+              gameManager.showMessage(session);
+            }, 1000);
+            return;
           }
-        }, 1000);
+          
+          // If the game is not over, let the AI make a move
+          setTimeout(() => {
+            if (!gameManager.isGameOver()) {
+              gameManager.makeAIMove();
+              gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+              
+              // If game is over after AI's move, show the message
+              if (gameManager.isGameOver()) {
+                setTimeout(() => {
+                  gameManager.showMessage(session);
+                }, 1000);
+              }
+            }
+          }, 1000);
+        }
       }
     }
   }
-}
 
-/**
- * Sends a display event (game board) to the cloud.
- */
-function showGameToUser(sessionId: string, ws: WebSocket, text: string) {
-  console.log(`[Session ${sessionId}]: Game board to show: \n${text}`);
-
-  const displayRequest: DisplayRequest = {
-    type: TpaToCloudMessageType.DISPLAY_REQUEST,
-    view: ViewType.MAIN,
-    packageName: PACKAGE_NAME,
-    sessionId,
-    layout: {
-      layoutType: LayoutType.TEXT_WALL,
-      text: text
-    },
-    timestamp: new Date(),
-    durationMs: 60 * 1000, // 60 seconds timeout
-    forceDisplay: true
-  };
-
-  ws.send(JSON.stringify(displayRequest));
-}
-
-/**
- * Refreshes all sessions for a user after settings changes.
- */
-function refreshUserSessions(userId: string) {
-  const sessionIds = userSessions.get(userId);
-  if (!sessionIds || sessionIds.size === 0) {
-    console.log(`No active sessions found for user ${userId}`);
-    return false;
-  }
-  
-  console.log(`Refreshing ${sessionIds.size} sessions for user ${userId}`);
-  
-  // Get the game manager
-  const gameManager = userGameManagers.get(userId);
-  if (!gameManager) {
-    console.log(`No game manager found for user ${userId}`);
-    return false;
-  }
-  
-  // Refresh each session
-  for (const sessionId of sessionIds) {
-    const ws = activeSessions.get(sessionId);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log(`Refreshing session ${sessionId}`);
+  /**
+   * Handles settings updates
+   */
+  public async updateSettings(userId: string): Promise<any> {
+    try {
+      console.log('Received settings update for user:', userId);
       
-      // Show the current game state
-      showGameToUser(sessionId, ws, gameManager.getCurrentBoardDisplay());
-    } else {
-      console.log(`Session ${sessionId} is not open, removing from tracking`);
-      activeSessions.delete(sessionId);
-      sessionIds.delete(sessionId);
+      // Fetch and apply new settings
+      await fetchSettings(userId);
+      
+      // Get updated settings
+      const difficulty = getUserDifficulty(userId);
+      
+      // Update game manager with new settings
+      let gameManager = userGameManagers.get(userId);
+      if (gameManager) {
+        gameManager.setDifficulty(difficulty);
+      }
+      
+      return {
+        status: 'settings updated',
+        difficulty
+      };
+    } catch (error) {
+      console.error('Error updating settings:', error);
+      throw error;
     }
   }
-  
-  return sessionIds.size > 0;
 }
 
-app.post('/settings', async (req, res) => {
+// Create and start the app
+const ticTacToeApp = new TicTacToeApp();
+
+// Add settings endpoint
+const expressApp = ticTacToeApp.getExpressApp();
+expressApp.post('/settings', async (req: any, res: any) => {
   try {
-    console.log('Received settings update for Tic Tac Toe:', req.body);
     const { userIdForSettings } = req.body;
-    
-    // Fetch and apply new settings
-    await fetchSettings(userIdForSettings);
-    
-    // Get updated settings
-    const difficulty = getUserDifficulty(userIdForSettings);
-    
-    // Update game manager with new settings
-    let gameManager = userGameManagers.get(userIdForSettings);
-    if (gameManager) {
-      gameManager.setDifficulty(difficulty);
+
+    if (!userIdForSettings) {
+      return res.status(400).json({ error: 'Missing userIdForSettings in payload' });
     }
-    
-    // Refresh all active sessions for this user
-    refreshUserSessions(userIdForSettings);
-    
-    res.status(200).json({ status: 'settings updated' });
+
+    const result = await ticTacToeApp.updateSettings(userIdForSettings);
+    res.json(result);
   } catch (error) {
-    console.error('Error updating settings:', error);
+    console.error('Error in settings endpoint:', error);
     res.status(500).json({ error: 'Internal server error updating settings' });
   }
 });
 
 // Add a route to verify the server is running
-app.get('/health', (req, res) => {
+expressApp.get('/health', (req: any, res: any) => {
   res.json({ status: 'healthy', app: PACKAGE_NAME });
 });
 
-app.listen(PORT, () => {
+// Start the server
+ticTacToeApp.start().then(() => {
   console.log(`${PACKAGE_NAME} server running on port ${PORT}`);
+}).catch(error => {
+  console.error('Failed to start server:', error);
 });
-

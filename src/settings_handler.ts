@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const PACKAGE_NAME = 'com.augmentos.tictactoe';
-const CLOUD_URL = 'cloud';
+const CLOUD_HOST_NAME = process.env.CLOUD_HOST_NAME || 'cloud';
 
 // Define the settings interface
 interface UserSettings {
@@ -24,7 +24,7 @@ const userSettingsMap = new Map<string, UserSettings>();
 async function fetchSettings(userId: string): Promise<UserSettings> {
   try {
     // Fetch user settings from the cloud
-    const response = await axios.get(`http://${CLOUD_URL}/tpasettings/user/${PACKAGE_NAME}`, {
+    const response = await axios.get(`http://${CLOUD_HOST_NAME}/tpasettings/user/${PACKAGE_NAME}`, {
       headers: { Authorization: `Bearer ${userId}` }
     });
 
