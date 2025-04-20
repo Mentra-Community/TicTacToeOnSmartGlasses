@@ -11,9 +11,17 @@ import { fetchSettings, getUserDifficulty, UserSettings } from './settings_handl
 
 // Configuration constants
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
-const PACKAGE_NAME = 'com.augmentos.tictactoe';
-const API_KEY = 'test_key'; // In production, this would be securely stored
+const CLOUD_HOST_NAME = process.env.CLOUD_HOST_NAME;
+const PACKAGE_NAME = process.env.PACKAGE_NAME;
+const AUGMENTOS_API_KEY = process.env.AUGMENTOS_API_KEY;
 
+// Validate required environment variables
+if (!PACKAGE_NAME) {
+  throw new Error('PACKAGE_NAME environment variable is required');
+}
+if (!AUGMENTOS_API_KEY) {
+  throw new Error('AUGMENTOS_API_KEY environment variable is required');
+}
 // TicTacToeManager class to handle the game logic
 class TicTacToeManager {
   private board: string[];
@@ -343,8 +351,8 @@ const userGameManagers: Map<string, TicTacToeManager> = new Map();
 class TicTacToeApp extends TpaServer {
   constructor() {
     super({
-      packageName: PACKAGE_NAME,
-      apiKey: API_KEY,
+      packageName: PACKAGE_NAME!,
+      apiKey: AUGMENTOS_API_KEY!,
       port: PORT,
       publicDir: path.resolve(__dirname, './public'),
     });
