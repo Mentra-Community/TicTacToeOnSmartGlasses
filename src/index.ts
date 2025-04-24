@@ -83,12 +83,18 @@ class TicTacToeManager {
     }
     // Show game over messages (without showing grid after)
     else if (this.gameOver) {
-      if (this.winner) {
-        message = `${this.winner === this.userSymbol ? 'YOU WIN!' : 'AI WINS!'} Say 'new game'`;
-      } else {
-        message = "It's a DRAW! Say 'new game'";
-      }
-      this.showGameToUser(session, message);
+      // First show the final board position
+      this.showGameToUser(session, this.getCurrentBoardDisplay());
+      
+      // After 1.5 seconds, show the winner message
+      setTimeout(() => {
+        if (this.winner) {
+          message = `${this.winner === this.userSymbol ? 'YOU WIN!' : 'AI WINS!'} Say 'new game'`;
+        } else {
+          message = "It's a DRAW! Say 'new game'";
+        }
+        this.showGameToUser(session, message);
+      }, 1500);
     }
     // Show error messages for invalid moves
     else if (this.lastError) {
