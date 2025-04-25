@@ -78,7 +78,7 @@ class TicTacToeManager {
         // After 1.5 seconds, show the grid
         setTimeout(() => {
           this.showGameToUser(session, this.getCurrentBoardDisplay());
-        }, 1500);
+        }, 2000);
       }
     }
     // Show game over messages (without showing grid after)
