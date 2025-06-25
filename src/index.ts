@@ -7,11 +7,9 @@ import {
   ViewType,
   createTranscriptionStream,
 } from '@augmentos/sdk';
-import { fetchSettings, getUserDifficulty, UserSettings } from './settings_handler';
 
 // Configuration constants
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 80;
-const CLOUD_HOST_NAME = process.env.CLOUD_HOST_NAME;
 const PACKAGE_NAME = process.env.PACKAGE_NAME;
 const AUGMENTOS_API_KEY = process.env.AUGMENTOS_API_KEY;
 
@@ -22,6 +20,7 @@ if (!PACKAGE_NAME) {
 if (!AUGMENTOS_API_KEY) {
   throw new Error('AUGMENTOS_API_KEY environment variable is required');
 }
+
 // TicTacToeManager class to handle the game logic
 class TicTacToeManager {
   private board: string[];
@@ -371,12 +370,84 @@ class TicTacToeApp extends TpaServer {
     console.log(`\n\n🎮🎮🎮 Received Tic Tac Toe session request for user ${userId}, session ${sessionId}\n\n`);
 
     try {
-      // Fetch and apply settings for the session
-      await fetchSettings(userId);
+      // Set up settings change handlers
+      this.setupSettingsHandlers(session, sessionId, userId);
       
+      // Apply initial settings
+      await this.applySettings(session, sessionId, userId);
+
+    } catch (error) {
+      console.error('Error initializing session:', error);
+      // Apply default settings if there was an error
+      const difficulty = 'Easy';
+      let gameManager = userGameManagers.get(userId);
+      if (!gameManager) {
+        gameManager = new TicTacToeManager(difficulty);
+        userGameManagers.set(userId, gameManager);
+      } else {
+        gameManager.setDifficulty(difficulty);
+      }
+
+      // Subscribe to transcription events
+      const transcriptionStream = createTranscriptionStream("en-US") as unknown as StreamType;
+      session.subscribe(transcriptionStream);
+
+      // Register transcription handler
+      const cleanup = session.events.onTranscription((data: any) => {
+        this.handleTranscription(session, sessionId, userId, data);
+      });
+
+      // Add cleanup handler
+      this.addCleanupHandler(cleanup);
+
+      // Show initial message and grid
+      gameManager.showMessage(session);
+      
+      console.log(`12#@$4324 Applied settings for user ${userId} successfully`);
+      // If AI starts, make its move after the message
+      // if (gameManager.getCurrentPlayer() !== gameManager.getUserSymbol()) {
+        setTimeout(() => {
+          if (gameManager) {
+            gameManager.makeAIMove();
+            gameManager.showGameToUser(session, gameManager.getCurrentBoardDisplay());
+          }
+        }, 2000);
+      // }
+
+      console.log(`#@$4324 Applied settings for user ${userId} successfully`);
+    }
+  }
+
+  /**
+   * Set up handlers for settings changes
+   */
+  private setupSettingsHandlers(
+    session: TpaSession,
+    sessionId: string,
+    userId: string
+  ): void {
+    // Handle difficulty changes
+    session.settings.onValueChange('difficulty', (newValue, oldValue) => {
+      console.log(`Difficulty changed for user ${userId}: ${oldValue} -> ${newValue}`);
+      this.applySettings(session, sessionId, userId);
+    });
+  }
+
+  /**
+   * Apply settings from the session to the game manager
+   */
+  private async applySettings(
+    session: TpaSession,
+    sessionId: string,
+    userId: string
+  ): Promise<void> {
+    try {
+      // Extract difficulty setting
+      const difficulty = session.settings.get<string>('difficulty', 'Easy');
+      
+      console.log(`Applied settings for user ${userId}: difficulty=${difficulty}`);
+
       // Create or update game manager with user settings
-      const difficulty = getUserDifficulty(userId);
-      
       let gameManager = userGameManagers.get(userId);
       if (!gameManager) {
         gameManager = new TicTacToeManager(difficulty);
@@ -409,8 +480,12 @@ class TicTacToeApp extends TpaServer {
           }
         }, 2000);
       }
+      
+      console.log(`Applied settings for user ${userId} successfully`);
+      
     } catch (error) {
-      console.error('Error initializing session:', error);
+      console.error(`Error applying settings for user ${userId}:`, error);
+      throw error;
     }
   }
 
@@ -418,7 +493,32 @@ class TicTacToeApp extends TpaServer {
    * Called by TpaServer when a session is stopped
    */
   protected async onStop(sessionId: string, userId: string, reason: string): Promise<void> {
-    console.log(`Session ${sessionId} stopped: ${reason}`);
+    console.log(`\n\n💥💥💥 SESSION TERMINATION INITIATED - User: ${userId}, Session: ${sessionId}, Reason: ${reason}\n\n`);
+    
+    try {
+      // Clean up game manager for this user
+      const gameManager = userGameManagers.get(userId);
+      if (gameManager) {
+        console.log(`🧹 Cleaning up game manager for user ${userId}`);
+        userGameManagers.delete(userId);
+        console.log(`✅ Game manager removed for user ${userId}`);
+      }
+      
+      // Clean up any active transcription streams or handlers
+      console.log(`🧹 Cleaning up transcription handlers for session ${sessionId}`);
+      
+      // Remove any session-specific resources
+      console.log(`🧹 Cleaning up session resources for ${sessionId}`);
+      
+      // Log cleanup completion
+      console.log(`✅ Session cleanup completed for user ${userId}, session ${sessionId}`);
+      console.log(`📊 Remaining active game managers: ${userGameManagers.size}`);
+      
+    } catch (error) {
+      console.error(`❌ Error during session cleanup for user ${userId}, session ${sessionId}:`, error);
+    }
+    
+    console.log(`\n\n🎯 SESSION TERMINATION COMPLETE - User: ${userId}, Session: ${sessionId}\n\n`);
   }
 
   /**
@@ -514,59 +614,13 @@ class TicTacToeApp extends TpaServer {
       }
     }
   }
-
-  /**
-   * Handles settings updates
-   */
-  public async updateSettings(userId: string): Promise<any> {
-    try {
-      console.log('Received settings update for user:', userId);
-      
-      // Fetch and apply new settings
-      await fetchSettings(userId);
-      
-      // Get updated settings
-      const difficulty = getUserDifficulty(userId);
-      
-      // Update game manager with new settings
-      let gameManager = userGameManagers.get(userId);
-      if (gameManager) {
-        gameManager.setDifficulty(difficulty);
-      }
-      
-      return {
-        status: 'settings updated',
-        difficulty
-      };
-    } catch (error) {
-      console.error('Error updating settings:', error);
-      throw error;
-    }
-  }
 }
 
 // Create and start the app
 const ticTacToeApp = new TicTacToeApp();
 
-// Add settings endpoint
-const expressApp = ticTacToeApp.getExpressApp();
-expressApp.post('/settings', async (req: any, res: any) => {
-  try {
-    const { userIdForSettings } = req.body;
-
-    if (!userIdForSettings) {
-      return res.status(400).json({ error: 'Missing userIdForSettings in payload' });
-    }
-
-    const result = await ticTacToeApp.updateSettings(userIdForSettings);
-    res.json(result);
-  } catch (error) {
-    console.error('Error in settings endpoint:', error);
-    res.status(500).json({ error: 'Internal server error updating settings' });
-  }
-});
-
 // Add a route to verify the server is running
+const expressApp = ticTacToeApp.getExpressApp();
 expressApp.get('/health', (req: any, res: any) => {
   res.json({ status: 'healthy', app: PACKAGE_NAME });
 });
